@@ -1,0 +1,265 @@
+---
+title: "Tests"
+author: "Khvostova Svetlana"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Research Question**
+
+To what extent do education and religiosity predict life satisfaction in Italy, and does education level moderate the relationship between religiosity and well-being?
+
+Italy is an interesting case when it comes to well-being research. It is a country with deep Catholic roots, but religiosity varies a lot across generations. At the same time, education levels have shifted significantly over recent decades. I wanted to find out whether these two factors (how religious someone is and how far they got in education) actually relate to how satisfied people are with their lives.
+
+
+1. t-test (stflife by GNDR) - Does life satisfaction differ between men and women?
+
+2. Chi-square(edulvlb × gndr) - Is education related to gender?
+
+3. Correlation(rlgdgr ~ stflife) - Are Religiosity and life satisfaction related?
+
+4. ANOVA(stflife by edulvlb) - Does satisfaction vary by education level?
+
+5. Regression base(dulvlb + rlgdgr → stflife) - basic model
+
+6. Model comparison (+ gndr + agea → stflife - Does adding demographics improve the model?
+
+7. Interaction (edulvlb × rlgdgr → stflife) - Does education mitigate the effect of religiosity?
+
+# **Variables**
+
+stflife - Life satisfaction, rated 0 to 10 (continuous)
+
+rlgdgr - How religious the respondent considers themselves (continuous)
+
+edulvlb - Highest level of education completed, ISCED coded categories (ordinal categorical)
+
+gndr - Gender, 1 = male, 2 = female (binary categorical)
+
+agea - Age in years at time of interview (continuous)
+
+# **Data preparation**
+
+```{r}
+library(dplyr)
+library(rstatix)       
+library(car)            
+library(effectsize)    
+    
+
+italy <- read.csv("C:/Users/Administrator/Downloads/ESS country data - IT.csv")
+
+round_11 <- italy %>%
+  filter(essround == 11)
+
+round_11_clean <- round_11 %>%
+  select(stflife, edulvlb, rlgdgr, gndr, agea) %>%
+  mutate(
+    stflife = replace(stflife, stflife %in% c(77, 88, 99), NA),
+    edulvlb = replace(edulvlb, edulvlb %in% c(5555, 7777, 8888, 9999), NA),
+    rlgdgr  = replace(rlgdgr,  rlgdgr  %in% c(77, 88, 99), NA),
+    gndr    = replace(gndr,    gndr    == 9, NA),
+    agea    = replace(agea,    agea    %in% c(77, 88, 999), NA)  #cleaning the data from missing and extremal values
+  ) %>%
+  filter(!is.na(stflife) & !is.na(edulvlb) & !is.na(rlgdgr) &
+         !is.na(gndr) & !is.na(agea))
+
+
+round_11_clean <- round_11_clean %>%
+  mutate(edu_cat = case_when(
+    edulvlb %in% c(0, 113)        ~ "primary",
+    edulvlb %in% c(213, 222, 229) ~ "lower_secondary",
+    edulvlb %in% c(313, 321, 323) ~ "upper_secondary",
+    edulvlb %in% c(421, 520)      ~ "post_secondary",
+    edulvlb %in% c(620, 720, 800) ~ "tertiary",
+    TRUE                          ~ NA_character_
+  ),
+  edu_cat = factor(edu_cat, levels = c(
+    "primary", "lower_secondary", "upper_secondary",
+    "post_secondary", "tertiary"
+  )))
+
+table(round_11_clean$edu_cat)
+```
+
+## **T-test: Does life satisfaction differ between men and women? **
+
+Hypothesis:
+
+H0: There is no difference in mean life satisfaction between men and women in Italy
+H1: Mean life satisfaction differs between men and women in Italy.
+
+Checking assumptions for t-test:
+1. Continuous dependent variable 
+2. Independence of observations 
+3. No significant outliers 
+
+```{r}
+boxplot(stflife ~ gndr, data = round_11_clean,
+        names = c("Male", "Female"),
+        main = "Life Satisfaction by Gender",
+        ylab = "Life Satisfaction (0-10)",
+        col = c("lightblue", "hotpink"))
+```
+
+Here we can see a few dots at the bottom, but they are not outliers, these are real people's answers, because all extreme values I have deleted.
+
+4. Normality
+```{r}
+par(mfrow = c(1, 2))
+hist(round_11_clean$stflife[round_11_clean$gndr == 1],
+     main = "Male", xlab = "Life Satisfaction", col = "lightblue")
+hist(round_11_clean$stflife[round_11_clean$gndr == 2],
+     main = "Female", xlab = "Life Satisfaction", col = "hotpink")
+par(mfrow = c(1, 1))
+```
+
+Both distributions show a slight negative skew, which is logical for assessing life satisfaction. This is not a problem for the test, as I have a very large sample (n > 1000)
+
+```{r}
+t.test(stflife ~ gndr, data = round_11_clean, var.equal = TRUE)
+```
+The p-value is equal to 0.09578, it is higher than 0.05, so I can not reject the null hypothesis. There is no statistically significant difference in life satisfaction between men (6.774580) and women (6.651293). To sum up, gender does not appear to be associated with life satisfaction in Italy.
+
+## **Chi-test: Is education related to gender?**
+
+H0: Education level and gender are independent.
+H1: Education level and gender are not independent.
+
+Checking assumptions:
+
+1.Categorical variables
+2.Independence of observations 
+3.Expected frequency ≥ 5
+
+```{r}
+chisq.test(round_11_clean$edu_cat, round_11_clean$gndr)$expected
+```
+All values are higer that 5, the assumption is completed.
+
+
+```{r}
+chisq.test(round_11_clean$edu_cat, round_11_clean$gndr)
+```
+The p-value is very small, it means that we can reject the null hypothesis. There is a statistically significant association between education level and gender. They are not independent. But chi-square does not show exactly where the connection is, so I will conduct one another test.
+
+```{r}
+chisq.test(round_11_clean$edu_cat, round_11_clean$gndr)$residuals
+```
+Now I can see that the association is represented mainly by two groups: 1) women are more likely to have only primary (2.55) education, 2) while men are more likely to have post-secondary qualification. Other connections are too slight (< 1)
+
+## **Correlation: Are Religiosity and life satisfaction related?**
+
+H0: There is no correlation between religiosity and life satisfaction.
+H1: There is a correlation between religiosity and life satisfaction.
+
+1. Ordinaly / continuous variables
+2. Independent observations
+3. Monotonic 
+
+```{r}
+tapply(round_11_clean$stflife, round_11_clean$rlgdgr, mean)
+
+```
+I have already seen that there is no monotonic trend, even without a test I can say that there is will be no or very slight correlation.
+
+```{r}
+cor.test(round_11_clean$rlgdgr, round_11_clean$stflife, method = "spearman")
+```
+The p-value is very small, so the correlatio is statistically significant, but the effect size is extremely small. I do not think that it is meaningfull.
+
+# **ANOVA: Does satisfaction vary by education level?**
+
+H0: Mean life satisfaction is equal across all education levels.
+H1: At least one education group differs in mean life satisfaction.
+
+Checking assumptions:
+
+1. Continuous dependent variable 
+2. Independence of observations 
+3. Normality 
+4. Homogeneity of variances 
+
+```{r}
+boxplot(stflife ~ edu_cat, data = round_11_clean,
+        main = "Life Satisfaction by Education Level",
+        xlab = "Education", ylab = "Life Satisfaction (0-10)",
+        col = "hotpink",
+        las = 2)
+```
+Even before the anova test I can see that the higher the level of education, the higher the median.
+Now I will check the normality of variances.
+
+```{r}
+leveneTest(stflife ~ edu_cat, data = round_11_clean)
+```
+The variances are not equal so I will use Welch-ANOVA
+
+```{r}
+oneway.test(stflife ~ edu_cat, data = round_11_clean, var.equal = FALSE)
+```
+The p-value is very small, therefore the differeneces between groups is statistically significant and ver strong (39.6). Now I will condu
+
+```{r}
+
+games_howell_test(round_11_clean, stflife ~ edu_cat)
+```
+I can see that there is a slight difference between upper_secondary and teriary *
+The difference between post_secondary and teriary, upper_secondary and post_secondary is not significant
+Other differences are significant. Primary has the lowest satisfaction, all other groups are above it.
+To sum up, the higher the educationd, the higher the level of satisfaction, but it is significant before upper-secondary.
+
+## **Regression: basic model, comparison, interaction**
+
+H0: Neither education nor religiosity significantly predict life satisfaction.
+H1₁: At least one of the predictors significantly predicts life satisfaction.
+
+1. Linearity 
+2. Independence 
+3. Homoscedasticity 
+4. Normality of residuals 
+
+```{r}
+model1 <- lm(stflife ~ edu_cat + rlgdgr, data = round_11_clean)
+summary(model1)
+```
+
+```{r}
+hist(residuals(model1),
+     main = "Distribution of Residuals",
+     xlab = "Residuals",
+     col = "lightblue")
+```
+Residuals are approximately normally distributed and centered around zero
+
+5. No multicollinearity
+```{r}
+vif(model1)
+```
+There is no multicollinearity — all GVIF values are close to 1
+
+
+```{r}
+model2 <- lm(stflife ~ edu_cat + rlgdgr + gndr + agea, data = round_11_clean)
+summary(model2)
+```
+```{r}
+anova(model1, model2)
+```
+The base model (model 1) showed that education significantly predicted life satisfaction across all levels, while religiosity was not significant . Adding gender and age (model 2) significantly improved model fit. Religiosity became a significant predictor in Model 2 (p = .034).
+
+```{r}
+model3 <- lm(stflife ~ edu_cat * rlgdgr, data = round_11_clean)
+summary(model3)
+```
+```
+
+
+The interaction model tested whether education moderates the effect of religiosity on life satisfaction. Despite the fact that education is a significant predictor none of the interaction terms between education and religiosity are significant. This means that the relationship between religiosity and life satisfaction does not differ across education levels — education and religiosity operate as independent predictors rather than interacting with each other. 
+
+## **Conclusion**
+
+Both education and religiosity predict life satisfaction in Italy, but in very different extents. Education is the stronger and more consistent predictor: people with higher education report meaningfully higher life satisfaction, with the most notable gap between primary education and all other levels. Religiosity shows a small but significant effect only under age contol. Education does not moderate the relationship between religiosity and well-being.
